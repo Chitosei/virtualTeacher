@@ -79,3 +79,7 @@ dmypy.json
 data/
 src/
 utils/
+web/__pycache__/
+web/api/__pycache__/
+web/api/talk_to_yourself/__pycache__/
+web/api/reflective_dialogue/__pycache__/
