@@ -2,10 +2,15 @@ import json
 import os
 from collections import defaultdict, deque
 
+# Create folder data to store the chat history
+os.makedirs("data", exist_ok=True)
+TEACHING_SIMULATION_HISTORY = "data/teaching_simulation.json"
+
+
 class ConversationMemory:
     def __init__(self, max_length=20):
         self.sessions = defaultdict(lambda: deque(maxlen=max_length))
-        self.storage_file = "conversation_logs.json"  # File lưu hội thoại
+        self.storage_file = TEACHING_SIMULATION_HISTORY  # File lưu hội thoại
 
     def add_message(self, session_id, role, message):
         self.sessions[session_id].append({"role": role, "message": message})
@@ -26,6 +31,7 @@ class ConversationMemory:
 
     def save_to_file(self, session_id):
         """Lưu hội thoại vào file JSON"""
+
         try:
             if os.path.exists(self.storage_file):
                 with open(self.storage_file, "r", encoding="utf-8") as f:
