@@ -3,7 +3,7 @@ import os
 
 from fastapi import APIRouter, HTTPException
 from web.api.api_utils import generate_talk_response, ChatRequest
-
+from web.api.api_utils import text_to_speech
 # Initialize FastAPI app
 router = APIRouter()
 
@@ -19,11 +19,12 @@ def load_chat_history():
         with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
             try:
                 data = json.load(f)
-                if isinstance(data, dict):  # ✅ Ensure correct format
+                if isinstance(data, dict):  # Đảm bảo dữ liệu là dict
                     return data
             except json.JSONDecodeError:
-                return []  # Return empty list if file is corrupted
-    return []  # Return empty list if file doesn't exist
+                return {}  # Trả về dict rỗng thay vì list
+    return {}  # Trả về dict rỗng thay vì list
+
 
 
 # Save chat history to file
@@ -56,7 +57,7 @@ def chat(request: ChatRequest):
 
         # Generate response from GPT-4o-mini
         response_text = generate_talk_response(request.user_input)
-
+        audio_url = text_to_speech(response_text)
         # Store conversation history
         chat_sessions[request.session_id].append({"role": "user", "content": request.user_input})
         chat_sessions[request.session_id].append({"role": "assistant", "content": response_text})
