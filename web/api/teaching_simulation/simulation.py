@@ -1,51 +1,79 @@
-from fastapi import HTTPException
-from .models import TeachingSimulationRequest
-from .memory import ConversationMemory
-from web.api.api_utils import generate_response
+import json
+import os
 
-# Khởi tạo bộ nhớ hội thoại
-conversation_memory = ConversationMemory(max_length=20)
+from fastapi import APIRouter, HTTPException
+from web.api.api_utils import generate_talk_response, ChatRequest
+from web.api.api_utils import text_to_speech
+# Initialize FastAPI app
+router = APIRouter()
 
-async def teaching_simulation_endpoint(request: TeachingSimulationRequest):
-    session_id = request.session_id
-    user_input = request.user_input
-    role = request.role.lower()
+# File to store chat history (to be replaced with DB later)
+os.makedirs("data",exist_ok=True)
+CHAT_HISTORY_FILE = "data/chat_history.json"
 
-    if role not in ["teacher", "student"]:
-        raise HTTPException(status_code=400, detail="Role phải là 'teacher' hoặc 'student'.")
 
-    # Khởi tạo lịch sử hội thoại nếu chưa có
-    if session_id not in conversation_memory.sessions:
-        conversation_memory.sessions[session_id] = []
+# Load chat history from file
+def load_chat_history():
+    """Loads chat history from a JSON file."""
+    if os.path.exists(CHAT_HISTORY_FILE):
+        with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                if isinstance(data, dict):  # Đảm bảo dữ liệu là dict
+                    return data
+            except json.JSONDecodeError:
+                return {}  # Trả về dict rỗng thay vì list
+    return {}  # Trả về dict rỗng thay vì list
 
-    # Thêm tin nhắn của người dùng vào lịch sử
-    conversation_memory.add_message(session_id, role, user_input)
 
-    # Lấy lịch sử hội thoại
-    history = conversation_memory.get_history(session_id)
-    conversation_history_text = "\n".join([f"{m['role'].capitalize()}: {m['message']}" for m in history])
 
-    # Xác định ai sẽ nói tiếp
-    next_speaker = "student" if role == "teacher" else "teacher"
+# Save chat history to file
+def save_chat_history(chat_data):
+    """Saves chat history to a JSON file."""
+    with open(CHAT_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(chat_data, f, ensure_ascii=False, indent=4)
 
-    # Tạo prompt cho AI
-    prompt = f"""
-    Bạn đang tham gia một cuộc hội thoại giữa giáo viên và học sinh.
-    - Giáo viên cung cấp hướng dẫn và phản hồi.
-    - Học sinh có thể đặt câu hỏi hoặc phản hồi.
-    - Trả lời với vai trò: {next_speaker}.
 
-    Cuộc hội thoại hiện tại:
-    {conversation_history_text}
+# ✅ Load chat history into chat_sessions on startup
+chat_sessions = load_chat_history()
 
-    Phản hồi tiếp theo:
+
+@router.post("/talk_to_yourself")
+def chat(request: ChatRequest):
     """
+    API endpoint to handle user input and return chatbot response, storing conversation history.
+    """
+    try:
+        # Get chat history for the session_id
+        if request.session_id not in chat_sessions:
+            chat_sessions[request.session_id] = []
 
-    # Gọi AI để tạo phản hồi
-    ai_response = generate_response([{"role": "system", "content": "Bạn là một chuyên gia giáo dục."},
-                                     {"role": "user", "content": prompt}])
+        chat_history = chat_sessions[request.session_id]
 
-    # Lưu phản hồi của AI
-    conversation_memory.add_message(session_id, next_speaker, ai_response)
+        # Append previous messages to maintain conversation context
+        messages = [{"role": "system", "content": "Bạn là một chatbot hỗ trợ giáo viên trả lời vấn đề học đường. Hãy trả lời bằng tiếng Việt."}]
+        messages.extend(chat_history)  # Add chat history
+        messages.append({"role": "user", "content": request.user_input})  # Add new user message
 
-    return {"response": ai_response, "role": next_speaker}
+        # Generate response from GPT-4o-mini
+        response_text = generate_talk_response(request.user_input)
+        audio_url = text_to_speech(response_text)
+        # Store conversation history
+        chat_sessions[request.session_id].append({"role": "user", "content": request.user_input})
+        chat_sessions[request.session_id].append({"role": "assistant", "content": response_text})
+
+        # Save updated history to file
+        save_chat_history(chat_sessions)
+
+        return {"session_id": request.session_id, "response": response_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/get_chat_history")
+def get_chat_history(session_id: str):
+    """Retrieves chat history for a specific session."""
+    if session_id not in chat_sessions:
+        return {"message": "No chat history found for this session."}
+
+    return {"session_id": session_id, "chat_history": chat_sessions[session_id]}
