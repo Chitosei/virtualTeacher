@@ -3,6 +3,7 @@ import os
 import sys
 
 import openai
+from fastapi import HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -105,3 +106,70 @@ class ChatRequest(BaseModel):
     language: str = "vi"
 
 
+def enhance_response_with_openai(question, initial_answer):
+    """
+    Sử dụng OpenAI để cải thiện câu trả lời dựa trên câu hỏi và câu trả lời ban đầu.
+
+    Args:
+        question (str): Câu hỏi của người dùng.
+        initial_answer (str): Câu trả lời ban đầu từ cơ sở dữ liệu.
+
+    Returns:
+        str: Câu trả lời được cải thiện từ OpenAI.
+    """
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    # Tạo prompt cho OpenAI
+    prompt = (
+        f"Đây là câu hỏi của người dùng: {question}\n"
+        f"Câu trả lời ban đầu: {initial_answer}\n"
+        "Dựa vào thông tin trên và câu hỏi người dùng, hãy đưa ra câu trả lời đầy đủ và chính xác nhất."
+    )
+
+    try:
+        # Gọi API của OpenAI để tạo phản hồi
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Hoặc mô hình khác phù hợp
+            messages=[
+                {"role": "system", "content": "Bạn là một trợ lý AI chuyên cung cấp câu trả lời chính xác và đầy đủ."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=300,
+            temperature=0.7
+
+        )
+
+        # Trích xuất câu trả lời từ phản hồi của OpenAI
+        enhanced_answer = response.choices[0].message.content.strip()
+        return enhanced_answer
+
+    except Exception as e:
+        # Xử lý ngoại lệ nếu có lỗi xảy ra
+        print(f"Đã xảy ra lỗi khi gọi OpenAI API: {e}")
+        return initial_answer  # Trả về câu trả lời ban đầu nếu có lỗi
+
+
+def recommending_pomodoro(task, duration):
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system",
+                 "content": "Bạn là một trợ lý quản lý thời gian. Hãy đề xuất một phương pháp học tập Pomodoro "
+                            "hoặc bất kỳ phưong pháp nào khác mà phù hợp dựa trên nhiệm vụ và thời lượng đã cho."
+                 },
+                {"role": "user",
+                 "content": f"Tôi cần học '{task}' trong {duration}. Hãy tạo lịch trình phù hợp."
+                 }
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+
+        response_text = response.choices[0].message.content.strip()
+
+        return response_text
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating Pomodoro schedule: {str(e)}")

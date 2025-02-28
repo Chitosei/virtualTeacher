@@ -3,7 +3,7 @@ transformers
 psycopg2
 numpy
 streamlit
-sounddevice
 fastapi
 uvicorn
 python-multipart
+python-dotenv

@@ -1,0 +1,267 @@
+import streamlit as st
+import psycopg2
+import torch
+import os
+from transformers import AutoModel, AutoTokenizer
+
+# Database connection
+DB_CONFIG = "dbname=aiTeacher user=postgres password=password host=localhost"
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Load PhoBERT model & tokenizer
+phobert = AutoModel.from_pretrained("vinai/phobert-large").to(device)
+tokenizer = AutoTokenizer.from_pretrained("vinai/phobert-large")
+
+# Audio settings
+SAMPLE_RATE = 16000
+CHANNELS = 1
+DATA_FOLDER = "data"
+os.makedirs(DATA_FOLDER, exist_ok=True)
+
+
+def get_phobert_embedding(text):
+    tokens = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=256)
+    tokens = {k: v.to(device) for k, v in tokens.items()}  # Move to GPU
+
+    with torch.no_grad():
+        output = phobert(**tokens)
+
+    embedding = output.last_hidden_state.mean(dim=1).cpu().numpy()  # Mean pooling
+    return embedding.flatten()
+
+
+def search_similar_question(user_embedding):
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    embedding_str = "[" + ",".join(map(str, user_embedding)) + "]"
+    cursor.execute("""
+        SELECT h.message, h.chat_id
+        FROM chat_history h
+        JOIN chat_embeddings e ON h.chat_id = e.chat_id
+        WHERE h.role = 'user'
+        ORDER BY e.embedding <-> %s::vector
+        LIMIT 1;
+    """, (embedding_str,))
+
+    result = cursor.fetchone()
+    print("Result: " + str(result))
+    cursor.close()
+    conn.close()
+
+    if result:
+        return result[0], result[1]  # Return question text and chat_id
+    return None, None
+
+
+def search_similar_reflection(user_embedding):
+    """Retrieves the most similar past reflection using PGVector"""
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    embedding_str = "[" + ",".join(map(str, user_embedding)) + "]"
+    cursor.execute("""
+        SELECT reflection_text, reflection_id, embedding <-> %s::vector AS distance
+        FROM reflections
+        ORDER BY distance ASC
+        LIMIT 1;
+    """, (embedding_str,))
+
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if result:
+        print(f"🔍 **Debug: Found Reflection:** {result[0]} (ID: {result[1]}) | Distance: {result[2]}")
+        return result[0], result[1]  # Return reflection text and reflection_id
+    else:
+        st.write("⚠️ **Debug: No similar reflection found.**")
+        return None, None
+
+
+def get_stored_response(chat_id):
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+            SELECT message FROM chat_history
+            WHERE role = 'assistant' 
+            AND user_id = (SELECT user_id FROM chat_history WHERE chat_id = %s)
+            ORDER BY created_at ASC LIMIT 1;
+        """, (chat_id,))
+
+    response = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    return response[0] if response else None
+
+
+def search_chat_history_feedback(user_embedding):
+    """Search for similar AI-generated feedback in `chat_embeddings` using PGVector"""
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    embedding_str = "[" + ",".join(map(str, user_embedding)) + "]"
+    cursor.execute("""
+        SELECT h.message 
+        FROM chat_history h
+        JOIN chat_embeddings e ON h.chat_id = e.chat_id
+        WHERE h.role = 'assistant'
+        ORDER BY e.embedding <-> %s::vector
+        LIMIT 1;
+    """, (embedding_str,))
+
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    return result[0] if result else "Không có phản hồi phù hợp trong hệ thống."
+
+
+def get_stored_ai_response(chat_id):
+    """Retrieves the AI-generated response for a given chat_id"""
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+                SELECT message FROM chat_history
+                WHERE role = 'assistant' 
+                AND user_id = (SELECT user_id FROM chat_history WHERE chat_id = %s)
+                ORDER BY created_at ASC LIMIT 1;
+            """, (chat_id,))
+
+    response = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    return response[0] if response else None
+
+
+def get_stored_ai_question(reflection_id):
+    """Retrieves the AI-generated self-reflection question for a given reflection_id"""
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT message FROM chat_history
+        WHERE reflection_category = (
+            SELECT reflection_category FROM reflections WHERE reflection_id = %s
+        ) AND role = 'assistant'
+        ORDER BY created_at ASC LIMIT 1;
+    """, (reflection_id,))
+
+    question = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    return question[0] if question else "Không có câu hỏi phản xạ nào được lưu trữ."
+
+
+def search_best_match(user_embedding):
+    """Tìm câu hỏi tương đồng nhất trong cả chat_history và reflections và lấy câu trả lời từ bảng có độ tương đồng cao hơn"""
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    embedding_str = "[" + ",".join(map(str, user_embedding)) + "]"
+
+    # Tìm câu hỏi tương đồng nhất trong chat_history
+    cursor.execute("""
+        SELECT h.message, h.chat_id, e.embedding <-> %s::vector AS distance
+        FROM chat_history h
+        JOIN chat_embeddings e ON h.chat_id = e.chat_id
+        WHERE h.role = 'user'
+        ORDER BY distance ASC
+        LIMIT 1;
+    """, (embedding_str,))
+    chat_result = cursor.fetchone()
+
+    # Tìm câu hỏi tương đồng nhất trong reflections
+    cursor.execute("""
+        SELECT r.reflection_text, r.reflection_id, r.embedding <-> %s::vector AS distance
+        FROM reflections r
+        ORDER BY distance ASC
+        LIMIT 1;
+    """, (embedding_str,))
+    reflection_result = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    # Kiểm tra nếu cả hai bảng đều có kết quả
+    if chat_result and reflection_result:
+        chat_text, chat_id, chat_distance = chat_result
+        reflection_text, reflection_id, reflection_distance = reflection_result
+
+        # Nếu chat_history có độ tương đồng cao hơn (distance nhỏ hơn)
+        if chat_distance < reflection_distance:
+            return chat_text, "chat_history", chat_id, chat_distance
+        else:  # reflections có độ tương đồng cao hơn
+            return reflection_text, "reflections", reflection_id, reflection_distance
+
+    # Nếu chỉ có kết quả từ chat_history
+    elif chat_result:
+        return chat_result[0], "chat_history", chat_result[1], chat_result[2]
+
+    # Nếu chỉ có kết quả từ reflections
+    elif reflection_result:
+        return reflection_result[0], "reflections", reflection_result[1], reflection_result[2]
+
+    return None, None, None, None  # Không tìm thấy câu hỏi tương đồng
+
+
+# Function to store a new question and response in the database
+def store_new_question_response(user_id, question, ai_response):
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    # Insert new question
+    cursor.execute("""
+        INSERT INTO chat_history (user_id, role, message)
+        VALUES (%s, %s, %s) RETURNING chat_id;
+    """, (user_id, 'user', question))
+
+    chat_id = cursor.fetchone()[0]
+
+    # Insert embedding
+    embedding = get_phobert_embedding(question)
+    embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+
+    cursor.execute("""
+        INSERT INTO chat_embeddings (chat_id, embedding)
+        VALUES (%s, %s::vector);
+    """, (chat_id, embedding_str))
+
+    # Insert AI response
+    cursor.execute("""
+        INSERT INTO chat_history (user_id, role, message)
+        VALUES (%s, %s, %s);
+    """, (user_id, 'assistant', ai_response))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return ai_response
+
+
+def get_stored_feedback(reflection_id):
+    """Retrieves stored AI feedback for a given reflection_id"""
+    conn = psycopg2.connect(DB_CONFIG)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT message FROM chat_history
+        WHERE reflection_category = (
+            SELECT reflection_category FROM reflections WHERE reflection_id = %s
+        ) AND role = 'assistant'
+        ORDER BY created_at DESC LIMIT 1;
+    """, (reflection_id,))
+
+    feedback = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    return feedback[0] if feedback else "Không có phản hồi nào được lưu trữ."
+
+
+
