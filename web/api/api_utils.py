@@ -2,6 +2,8 @@ import json
 import os
 import sys
 
+from gtts import gTTS
+import os
 import openai
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -173,3 +175,19 @@ def recommending_pomodoro(task, duration):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating Pomodoro schedule: {str(e)}")
+
+
+AUDIO_DIR = "static/audio/"  # Thư mục lưu file âm thanh
+os.makedirs(AUDIO_DIR, exist_ok=True)  # Đảm bảo thư mục tồn tại
+
+def text_to_speech(text, session_id):
+    """Gọi TTS để chuyển văn bản thành giọng nói"""
+    try:
+        output_file = os.path.join(AUDIO_DIR, f"{session_id}.mp3")  # Đặt tên file theo session_id
+        tts = gTTS(text=text, lang="vi")  # Chọn tiếng Việt
+        tts.save(output_file)
+
+        return f"/audio/{session_id}.mp3"  # Trả về đường dẫn file âm thanh
+    except Exception as e:
+        return None
+
