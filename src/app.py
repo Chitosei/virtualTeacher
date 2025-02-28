@@ -1,8 +1,10 @@
 import streamlit as st
 import requests
 
+
 # API endpoints
 API_BASE_URL = "http://localhost:8000"  # Change this to your actual API base URL
+
 
 # Sidebar for feature selection
 st.sidebar.title("Chatbot Features")
@@ -14,6 +16,7 @@ feature = st.sidebar.selectbox("Choose a feature:", [
     "Time Management Assistant",
     "Teaching Style Analysis"
 ])
+
 
 st.title(feature)
 
@@ -55,16 +58,37 @@ match feature:
                 st.error("Error retrieving chat history.")
 
     case "Reflective Dialogue":
-        user_input = st.text_area("Enter your dialogue:")
+        st.header("Reflective Dialogue")
+
+        # Ensure session state is initialized
+        if "chat_history" not in st.session_state:
+            st.session_state["chat_history"] = []
+
+        # Input for user message
+        session_id = st.text_input("Session ID", value="default_session")
+        user_input = st.text_area("Enter your reflection:")
+
         if st.button("Submit"):
-            response = call_api("reflective_dialogue", {"message": user_input})
-            st.write("Response:", response)
+            if user_input.strip():
+                response = requests.post(f"{API_BASE_URL}/reflective_dialogue",
+                                         json={"session_id": session_id, "user_input": user_input})
+                if response.status_code == 200:
+                    result = response.json()["response"]
+                    st.session_state["chat_history"].append(("You", user_input))
+                    st.session_state["chat_history"].append(("AI", result))
+                else:
+                    st.error("Error connecting to the server.")
+
+        # Display chat history
+        for role, message in st.session_state.get("chat_history", []):
+            with st.chat_message("user" if role == "You" else "assistant"):
+                st.markdown(message)
 
     case "Simulated Teaching Scenarios":
-        user_input = st.text_area("Describe the teaching scenario:")
-        if st.button("Generate"):
-            response = call_api("simulated_teaching", {"scenario": user_input})
-            st.write("Scenario:", response)
+            user_input = st.text_area("Describe the teaching scenario:")
+            if st.button("Generate"):
+                response = call_api("simulated_teaching", {"scenario": user_input})
+                st.write("Scenario:", response)
 
     case "Knowledge Recall Assistant":
         query = st.text_input("Enter your knowledge query:")
