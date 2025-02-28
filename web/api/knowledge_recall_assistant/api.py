@@ -1,3 +1,5 @@
+
+from web.api.api_utils import text_to_speech
 import os
 import sys
 from fastapi import APIRouter, HTTPException, Form, Query
@@ -33,6 +35,7 @@ def search_knowledge(query: str = Query(..., description="Nhập câu hỏi về
             print(relevant_knowledge)
             # Enhance the retrieved knowledge using OpenAI
             enhanced_answer = enhance_response_with_openai(query, relevant_knowledge)
+            audio_url = text_to_speech(enhanced_answer)
             return {"result": enhanced_answer}
 
         # Step 2: If no stored knowledge, generate a new response using LLM
