@@ -3,7 +3,7 @@ import os
 
 from fastapi import APIRouter, HTTPException, Form
 from web.api.api_utils import generate_response, ChatRequest
-
+from web.api.api_utils import text_to_speech
 # Create a separate router for reflective dialogue
 router = APIRouter()
 
@@ -56,7 +56,7 @@ def reflect(request: ChatRequest):
 
         # Generate reflective response
         response_text = generate_response(messages)
-
+        audio_url = text_to_speech(response_text)
         reflection_sessions[request.session_id].append({"role": "user", "content": request.user_input})
         reflection_sessions[request.session_id].append({"role": "assistant", "content": response_text})
 
