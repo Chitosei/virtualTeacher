@@ -1,9 +1,8 @@
 import json
 import os
+import re
 import sys
 
-from gtts import gTTS
-import os
 import openai
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -36,30 +35,35 @@ def generate_response(message):
             model="gpt-4o-mini",
             messages=message,
             temperature=0.7,
-            max_tokens=500
+            max_tokens=300
         )
         return response.choices[0].message.content
     except Exception as e:
         return f"Error: {str(e)}"
 
 
-def generate_talk_response(user_input):
+def generate_talk_response(user_input, chat_history):
     """
     Generates a response using OpenAI GPT-4o-mini.
     """
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
-
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system",
-                 "content": "Bạn là một chatbot hỗ trợ giáo viên trả lời vấn đề học đường. Hãy trả lời bằng tiếng Việt."},
+                 "content": f"Bạn là một chatbot hỗ trợ giáo viên trả lời vấn đề học đường. "
+                            f"Đây là những cuộc hội thoại cũ:\n{chat_history}\n. "
+                            f"Nếu không có cuộc hội thoại cũ nào ở trên có thể bỏ qua. "
+                            f"\nChú ý đến thứ tự của cuộc hội thoại và "
+                            f"đưa ra câu trả lời một cách đồng bộ nhất và không quá 300 tokens. "
+                            f"Chỉ đưa ra số lượng từ có hạn. Chỉ đề xuất từ 2 đến 3 gợi ý. Hãy trả lời bằng tiếng Việt."},
                 {"role": "user", "content": user_input}  # ✅ Fix: Pass as a list of objects
             ],
             temperature=0.7,
-            max_tokens=500
+            max_tokens=300
         )
+
         return response.choices[0].message.content
     except Exception as e:
         return f"Error: {str(e)}"
@@ -78,14 +82,14 @@ def generate_knowledge_response(message, user_id, session_id):
                 {
                     "role":"system",
                     "content":"Bạn là một chuyên viên hỗ trợ cung cấp câu trả lời chi tiết về kiến thức học. "
-                            "Trả về câu trả lời dưới dạng JSON với các phần: 'subject', 'topic', 'content'. "
+                            "Không quá 300 tokens "
                             "Hãy cung cấp nội dung đầy đủ với định nghĩa, lịch sử, ứng dụng thực tế, công thức, và ví dụ cụ thể."
 
                 },
                 {"role": "user", "content": f"Hãy giải thích chi tiết về chủ đề sau: {message}."}
             ],
             temperature=0.8,
-            max_tokens=500
+            max_tokens=300
         )
 
         response_text = response.choices[0].message.content.strip()
@@ -124,7 +128,8 @@ def enhance_response_with_openai(question, initial_answer):
     prompt = (
         f"Đây là câu hỏi của người dùng: {question}\n"
         f"Câu trả lời ban đầu: {initial_answer}\n"
-        "Dựa vào thông tin trên và câu hỏi người dùng, hãy đưa ra câu trả lời đầy đủ và chính xác nhất."
+        "Dựa vào thông tin trên và câu hỏi người dùng, hãy đưa ra câu trả lời ngắn gọn và chính xác nhất."
+        "Không quá 300 tokens"
     )
 
     try:
@@ -132,7 +137,7 @@ def enhance_response_with_openai(question, initial_answer):
         response = client.chat.completions.create(
             model="gpt-4o-mini",  # Hoặc mô hình khác phù hợp
             messages=[
-                {"role": "system", "content": "Bạn là một trợ lý AI chuyên cung cấp câu trả lời chính xác và đầy đủ."},
+                {"role": "system", "content": "Bạn là một trợ lý AI chuyên cung cấp câu trả lời chính xác và ngắn gọn."},
                 {"role": "user", "content": prompt},
             ],
             max_tokens=300,
@@ -151,6 +156,7 @@ def enhance_response_with_openai(question, initial_answer):
 
 
 def recommending_pomodoro(task, duration):
+
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
     try:
@@ -177,17 +183,6 @@ def recommending_pomodoro(task, duration):
         raise HTTPException(status_code=500, detail=f"Error generating Pomodoro schedule: {str(e)}")
 
 
-AUDIO_DIR = "static/audio/"  # Thư mục lưu file âm thanh
-os.makedirs(AUDIO_DIR, exist_ok=True)  # Đảm bảo thư mục tồn tại
-
-def text_to_speech(text, session_id):
-    """Gọi TTS để chuyển văn bản thành giọng nói"""
-    try:
-        output_file = os.path.join(AUDIO_DIR, f"{session_id}.mp3")  # Đặt tên file theo session_id
-        tts = gTTS(text=text, lang="vi")  # Chọn tiếng Việt
-        tts.save(output_file)
-
-        return f"/audio/{session_id}.mp3"  # Trả về đường dẫn file âm thanh
-    except Exception as e:
-        return None
-
+def clean_text(text):
+    """Removes unwanted symbols that should not be read out loud, including newlines."""
+    return re.sub(r"[*\-/+\n]", " ", text)

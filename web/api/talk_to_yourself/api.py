@@ -1,9 +1,10 @@
 import json
 import os
-
+import requests
 from fastapi import APIRouter, HTTPException
-from web.api.api_utils import generate_talk_response, ChatRequest
-from web.api.api_utils import text_to_speech
+from web.api.api_utils import generate_talk_response, ChatRequest,clean_text
+from src.setting import GG_DRIVE
+
 # Initialize FastAPI app
 router = APIRouter()
 
@@ -19,12 +20,11 @@ def load_chat_history():
         with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
             try:
                 data = json.load(f)
-                if isinstance(data, dict):  # Đảm bảo dữ liệu là dict
+                if isinstance(data, dict):  # ✅ Ensure correct format
                     return data
             except json.JSONDecodeError:
-                return {}  # Trả về dict rỗng thay vì list
-    return {}  # Trả về dict rỗng thay vì list
-
+                return []  # Return empty list if file is corrupted
+    return []  # Return empty list if file doesn't exist
 
 
 # Save chat history to file
@@ -50,22 +50,28 @@ def chat(request: ChatRequest):
 
         chat_history = chat_sessions[request.session_id]
 
-        # Append previous messages to maintain conversation context
-        messages = [{"role": "system", "content": "Bạn là một chatbot hỗ trợ giáo viên trả lời vấn đề học đường. Hãy trả lời bằng tiếng Việt."}]
-        messages.extend(chat_history)  # Add chat history
-        messages.append({"role": "user", "content": request.user_input})  # Add new user message
+        # Generate response
+        response_text = generate_talk_response(request.user_input,chat_history)
+        cleaned_text = clean_text(response_text)
+        print(cleaned_text)
+        # Send response text to the voice API
+        voice_api_url = "http://localhost:8001/api/voice/voice"
+        voice_payload = {"file_url": f"{GG_DRIVE}", "text": cleaned_text}
 
-        # Generate response from GPT-4o-mini
-        response_text = generate_talk_response(request.user_input)
-        audio_url = text_to_speech(response_text)
+        voice_response = requests.post(voice_api_url, json=voice_payload)
+        if voice_response.status_code == 200:
+            audio_url = "Audio save in voice_clone/app/static/media"
+        else:
+            audio_url = None  # Fallback in case the voice API fails
+
         # Store conversation history
         chat_sessions[request.session_id].append({"role": "user", "content": request.user_input})
-        chat_sessions[request.session_id].append({"role": "assistant", "content": response_text})
+        chat_sessions[request.session_id].append({"role": "assistant", "content": cleaned_text})
 
         # Save updated history to file
         save_chat_history(chat_sessions)
 
-        return {"session_id": request.session_id, "response": response_text}
+        return {"session_id": request.session_id, "response": cleaned_text,"audio_url":audio_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

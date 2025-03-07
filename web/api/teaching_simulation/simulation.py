@@ -1,10 +1,13 @@
 from fastapi import HTTPException
+
+from src.setting import GG_DRIVE
 from .models import TeachingSimulationRequest
 from .memory import ConversationMemory
-from web.api.api_utils import generate_response
-
+from web.api.api_utils import generate_response, clean_text
+import requests
 # Khởi tạo bộ nhớ hội thoại
 conversation_memory = ConversationMemory(max_length=20)
+
 
 async def teaching_simulation_endpoint(request: TeachingSimulationRequest):
     session_id = request.session_id
@@ -34,8 +37,7 @@ async def teaching_simulation_endpoint(request: TeachingSimulationRequest):
     - Giáo viên cung cấp hướng dẫn và phản hồi.
     - Học sinh có thể đặt câu hỏi hoặc phản hồi.
     - Trả lời với vai trò: {next_speaker}.
-    - Không được để vai trò ở đầu câu trả lời 
-
+    - Không được để tên vai trò của mình ở đầu câu trả lời.
     Cuộc hội thoại hiện tại:
     {conversation_history_text}
 
@@ -43,16 +45,21 @@ async def teaching_simulation_endpoint(request: TeachingSimulationRequest):
     """
 
     # Gọi AI để tạo phản hồi
-    ai_response = generate_response([{"role": "system", "content": "Bạn là một chuyên gia giáo dục."},
+    ai_response = generate_response([{"role": "system", "content": "Bạn là một chuyên gia giáo dục. Hãy trả lời không quá 300 tokens"},
                                      {"role": "user", "content": prompt}])
+
+    cleaned_text = clean_text(ai_response)
+    # Gửi phản hồi AI đến API chuyển giọng nói
+    voice_api_url = "http://localhost:8001/api/voice/voice"
+    voice_payload = {"file_url": f"{GG_DRIVE}", "text": cleaned_text}
+
+    voice_response = requests.post(voice_api_url, json=voice_payload)
+    if voice_response.status_code == 200:
+        audio_url = voice_response.json().get("audio_url")
+    else:
+        audio_url = None  # Nếu API voice thất bại, chỉ trả về văn bản
 
     # Lưu phản hồi của AI
     conversation_memory.add_message(session_id, next_speaker, ai_response)
-     # Gọi TTS để chuyển phản hồi thành giọng nói
-    audio_url = text_to_speech(ai_response, session_id)
-    return {
-            "session_id": session_id,
-            "response": ai_response,
-            "audio_url": audio_url, 
-            "role": next_speaker
-        }
+
+    return {"response": ai_response, "role": next_speaker}

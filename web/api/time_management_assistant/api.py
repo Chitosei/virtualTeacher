@@ -53,8 +53,8 @@ def find_available_slot(estimated_hours, deadline):
 
 class Task(BaseModel):
     task_name: str
-    duration: int  # in minutes
-    deadline: str  # ISO format: YYYY-MM-DDTHH:MM:SS
+    duration: int
+    deadline: str
 
 
 class PomodoroRequest(BaseModel):
